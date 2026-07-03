@@ -392,6 +392,36 @@ async function callGemini(contents, model, apiKey){
 const sleep = (ms)=>new Promise(r=>setTimeout(r, ms));
 const isComplete = (t)=> t.replace(/\s+$/,"").endsWith(END_MARK);
 
+/* URLを確実に除去（折り返しで複数行に分かれたURL断片も削除。本文は保持） */
+function stripUrls(md){
+  const lines = md.split("\n");
+  const out = [];
+  let expectCont=false, prevHyphen=false;
+  const urlInline=/https?:\/\/[^\s　]*/gi;
+  const startsFrag=/^\s*[\/#?]/;
+  const jpOrSpace=/[ぁ-んァ-ヶ一-龠々ー　\s]/;
+  const pureUrlChars=/^[A-Za-z0-9._~%\-]+$/;
+  for(const raw of lines){
+    let line=raw;
+    if(/https?:\/\//i.test(line)){
+      const removed=(line.match(urlInline)||[]).join("");
+      line=line.replace(urlInline,"").replace(/[ \t]+$/,"");
+      expectCont=true; prevHyphen=/-\s*$/.test(removed);
+      if(line.trim()===""){ continue; }
+      out.push(line); continue;
+    }
+    if(expectCont){
+      const t=line.trim();
+      if(t===""){ expectCont=false; prevHyphen=false; out.push(line); continue; }
+      const looksFragment = startsFrag.test(line) || (prevHyphen && !jpOrSpace.test(t) && pureUrlChars.test(t));
+      if(looksFragment){ prevHyphen=/-\s*$/.test(t); continue; }
+      expectCont=false; prevHyphen=false; out.push(line); continue;
+    }
+    out.push(line);
+  }
+  return out.join("\n").replace(/[ \t]+\n/g,"\n").replace(/\n{3,}/g,"\n\n").replace(/\s+$/,"");
+}
+
 /* ---------- パイプライン本体 ---------- */
 runEl.addEventListener("click", async ()=>{
   const apiKey = keyEl.value.trim();
@@ -424,6 +454,7 @@ runEl.addEventListener("click", async ()=>{
 
     setStatus("仕上げ中…", 95);
     let md = full.replace(/\s*<<END>>\s*$/,"").replace(/\s+$/,"");
+    md = stripUrls(md);
     if(!complete){
       md = "> ⚠️ 出力が途中で終わった可能性があります。ページを分けて再実行するか、Proでの再試行をご検討ください。\n\n" + md;
       showMsg("warn","出力が完了マーカーに達しませんでした。内容は破棄せず表示しています（末尾が欠けている可能性）。");
